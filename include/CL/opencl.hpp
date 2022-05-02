@@ -1951,7 +1951,7 @@ protected:
     cl_type object_;
     bool referenceCountable_;
 
-    static bool isReferenceCountable(cl_device_id device)
+    static bool isReferenceCountable([[maybe_unused]] cl_device_id device)
     {
         bool retVal = false;
 #if CL_HPP_TARGET_OPENCL_VERSION >= 120
