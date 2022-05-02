@@ -1966,7 +1966,6 @@ protected:
         retVal = true;
 #endif // CL_HPP_MINIMUM_OPENCL_VERSION < 120
 #endif // CL_HPP_TARGET_OPENCL_VERSION >= 120
-        (void)device;
         return retVal;
     }
 
@@ -2087,7 +2086,51 @@ inline bool operator!=(const Wrapper<T> &lhs, const Wrapper<T> &rhs)
 //! \endcond
 
 
+using BuildLogType = vector<std::pair<cl::Device, typename detail::param_traits<detail::cl_program_build_info, CL_PROGRAM_BUILD_LOG>::param_type>>;
+#if defined(CL_HPP_ENABLE_EXCEPTIONS)
+/**
+* Exception class for build errors to carry build info
+*/
+class BuildError : public Error
+{
+private:
+    BuildLogType buildLogs;
+public:
+    BuildError(cl_int err, const char * errStr, const BuildLogType &vec) : Error(err, errStr), buildLogs(vec)
+    {
+    }
 
+    BuildLogType getBuildLog() const
+    {
+        return buildLogs;
+    }
+};
+namespace detail {
+    static inline cl_int buildErrHandler(
+        cl_int err,
+        const char * errStr,
+        const BuildLogType &buildLogs)
+    {
+        if (err != CL_SUCCESS) {
+            throw BuildError(err, errStr, buildLogs);
+        }
+        return err;
+    }
+} // namespace detail
+
+#else
+namespace detail {
+    static inline cl_int buildErrHandler(
+        cl_int err,
+        const char * errStr,
+        const BuildLogType &buildLogs)
+    {
+        (void)buildLogs; // suppress unused variable warning
+        (void)errStr;
+        return err;
+    }
+} // namespace detail
+#endif // #if defined(CL_HPP_ENABLE_EXCEPTIONS)
 
 
 /*! \stuct ImageFormat
@@ -2396,52 +2439,6 @@ public:
     }
 #endif // defined(CL_HPP_USE_CL_DEVICE_FISSION)
 };
-
-using BuildLogType = vector<std::pair<cl::Device, typename detail::param_traits<detail::cl_program_build_info, CL_PROGRAM_BUILD_LOG>::param_type>>;
-#if defined(CL_HPP_ENABLE_EXCEPTIONS)
-/**
-* Exception class for build errors to carry build info
-*/
-class BuildError : public Error
-{
-private:
-    BuildLogType buildLogs;
-public:
-    BuildError(cl_int err, const char * errStr, const BuildLogType &vec) : Error(err, errStr), buildLogs(vec)
-    {
-    }
-
-    BuildLogType getBuildLog() const
-    {
-        return buildLogs;
-    }
-};
-namespace detail {
-    static inline cl_int buildErrHandler(
-        cl_int err,
-        const char * errStr,
-        const BuildLogType &buildLogs)
-    {
-        if (err != CL_SUCCESS) {
-            throw BuildError(err, errStr, buildLogs);
-        }
-        return err;
-    }
-} // namespace detail
-
-#else
-namespace detail {
-    static inline cl_int buildErrHandler(
-        cl_int err,
-        const char * errStr,
-        const BuildLogType &buildLogs)
-    {
-        (void)buildLogs; // suppress unused variable warning
-        (void)errStr;
-        return err;
-    }
-} // namespace detail
-#endif // #if defined(CL_HPP_ENABLE_EXCEPTIONS)
 
 CL_HPP_DEFINE_STATIC_MEMBER_ std::once_flag Device::default_initialized_;
 CL_HPP_DEFINE_STATIC_MEMBER_ Device Device::default_;
@@ -2861,7 +2858,7 @@ private:
             const Platform &p = Platform::getDefault();
             cl_platform_id defaultPlatform = p();
             cl_context_properties properties[3] = {
-                CL_CONTEXT_PLATFORM, (cl_context_properties)defaultPlatform, 0
+                CL_CONTEXT_PLATFORM, reinterpret_cast<cl_context_properties>(defaultPlatform), 0
             };
 #else // #if !defined(__APPLE__) && !defined(__MACOS)
             cl_context_properties *properties = nullptr;
@@ -2929,7 +2926,7 @@ public:
         }
 
         object_ = ::clCreateContext(
-            properties, (cl_uint) numDevices,
+            properties, static_cast<cl_uint>(numDevices),
             deviceIDs.data(),
             notifyFptr, data, &error);
 
@@ -3030,7 +3027,7 @@ public:
                 }
 
                 if (devices.size() > 0) {
-                    platform_id = (cl_context_properties)platforms[i]();
+                    platform_id = reinterpret_cast<cl_context_properties>(platforms[i]());
                     break;
                 }
             }
@@ -3191,7 +3188,7 @@ public:
                 flags,
                 type,
                 numEntries,
-                (cl_image_format*)value.data(),
+                reinterpret_cast<cl_image_format*>(value.data()),
                 NULL);
             if (err != CL_SUCCESS) {
                 return detail::errHandler(err, __GET_SUPPORTED_IMAGE_FORMATS_ERR);
@@ -3363,7 +3360,7 @@ public:
     {
         return detail::errHandler(
             ::clWaitForEvents(
-                (cl_uint) events.size(), (events.size() > 0) ? (cl_event*)&events.front() : NULL),
+                static_cast<cl_uint>(events.size()), (events.size() > 0) ? reinterpret_cast<cl_event const*>(&events.front()) : NULL),
             __WAIT_FOR_EVENTS_ERR);
     }
 };
@@ -3420,7 +3417,7 @@ WaitForEvents(const vector<Event>& events)
 {
     return detail::errHandler(
         ::clWaitForEvents(
-            (cl_uint) events.size(), (events.size() > 0) ? (cl_event*)&events.front() : NULL),
+            static_cast<cl_uint>(events.size()), (events.size() > 0) ? reinterpret_cast<cl_event const*>(&events.front()) : NULL),
         __WAIT_FOR_EVENTS_ERR);
 }
 
@@ -4008,7 +4005,7 @@ public:
         Context context = Context::getDefault(err);
 
         if( useHostPtr ) {
-            object_ = ::clCreateBuffer(context(), flags, size, const_cast<DataType*>(&*startIterator), &error);
+            object_ = ::clCreateBuffer(context(), flags, size, static_cast<DataType*>(&*startIterator), &error);
         } else {
             object_ = ::clCreateBuffer(context(), flags, size, 0, &error);
         }
@@ -4538,7 +4535,7 @@ public:
     {
         cl_int error;
 
-        cl_image_desc desc = {0};
+        cl_image_desc desc;
         desc.image_type = CL_MEM_OBJECT_IMAGE1D;
         desc.image_width = width;
 
@@ -4625,7 +4622,7 @@ public:
     {
         cl_int error;
 
-        cl_image_desc desc = {0};
+        cl_image_desc desc;
         desc.image_type = CL_MEM_OBJECT_IMAGE1D_BUFFER;
         desc.image_width = width;
         desc.buffer = buffer();
@@ -4710,7 +4707,7 @@ public:
     {
         cl_int error;
 
-        cl_image_desc desc = {0};
+        cl_image_desc desc;
         desc.image_type = CL_MEM_OBJECT_IMAGE1D_ARRAY;
         desc.image_width = width;
         desc.image_array_size = arraySize;
@@ -4822,7 +4819,7 @@ public:
 #if CL_HPP_TARGET_OPENCL_VERSION >= 120
         if (useCreateImage)
         {
-            cl_image_desc desc = {0};
+            cl_image_desc desc;
             desc.image_type = CL_MEM_OBJECT_IMAGE2D;
             desc.image_width = width;
             desc.image_height = height;
@@ -4873,7 +4870,7 @@ public:
     {
         cl_int error;
 
-        cl_image_desc desc = {0};
+        cl_image_desc desc;
         desc.image_type = CL_MEM_OBJECT_IMAGE2D;
         desc.image_width = width;
         desc.image_height = height;
@@ -4934,7 +4931,7 @@ public:
         // Channel format inherited from source.
         sourceFormat.image_channel_order = order;
 
-        cl_image_desc desc = {0};
+        cl_image_desc desc;
         desc.image_type = CL_MEM_OBJECT_IMAGE2D;
         desc.image_width = sourceWidth;
         desc.image_height = sourceHeight;
@@ -5129,7 +5126,7 @@ public:
     {
         cl_int error;
 
-        cl_image_desc desc = {0};
+        cl_image_desc desc;
         desc.image_type = CL_MEM_OBJECT_IMAGE2D_ARRAY;
         desc.image_width = width;
         desc.image_height = height;
@@ -5241,7 +5238,7 @@ public:
 #if CL_HPP_TARGET_OPENCL_VERSION >= 120
         if (useCreateImage)
         {
-            cl_image_desc desc = {0};
+            cl_image_desc desc;
             desc.image_type = CL_MEM_OBJECT_IMAGE3D;
             desc.image_width = width;
             desc.image_height = height;
@@ -6293,7 +6290,7 @@ public:
         Context context = Context::getDefault(err);
 
         object_ = ::clCreateProgramWithSource(
-            context(), (cl_uint)1, &strings, &length, &error);
+            context(), static_cast<cl_uint>(1), &strings, &length, &error);
 
         detail::errHandler(error, __CREATE_PROGRAM_WITH_SOURCE_ERR);
 
@@ -6331,7 +6328,7 @@ public:
         const size_type length  = source.size();
 
         object_ = ::clCreateProgramWithSource(
-            context(), (cl_uint)1, &strings, &length, &error);
+            context(), static_cast<cl_uint>(1), &strings, &length, &error);
 
         detail::errHandler(error, __CREATE_PROGRAM_WITH_SOURCE_ERR);
 
@@ -6367,23 +6364,23 @@ public:
         cl_int error;
         Context context = Context::getDefault(err);
 
-        const size_type n = (size_type)sources.size();
+        const size_type n = static_cast<size_type>(sources.size());
 
         vector<size_type> lengths(n);
         vector<const char*> strings(n);
 
         for (size_type i = 0; i < n; ++i) {
 #if !defined(CL_HPP_ENABLE_PROGRAM_CONSTRUCTION_FROM_ARRAY_COMPATIBILITY)
-            strings[i] = sources[(int)i].data();
-            lengths[i] = sources[(int)i].length();
+            strings[i] = sources[static_cast<int>(i)].data();
+            lengths[i] = sources[static_cast<int>(i)].length();
 #else // #if !defined(CL_HPP_ENABLE_PROGRAM_CONSTRUCTION_FROM_ARRAY_COMPATIBILITY)
-            strings[i] = sources[(int)i].first;
-            lengths[i] = sources[(int)i].second;
+            strings[i] = sources[static_cast<int>(i)].first;
+            lengths[i] = sources[static_cast<int>(i)].second;
 #endif // #if !defined(CL_HPP_ENABLE_PROGRAM_CONSTRUCTION_FROM_ARRAY_COMPATIBILITY)
         }
 
         object_ = ::clCreateProgramWithSource(
-            context(), (cl_uint)n, strings.data(), lengths.data(), &error);
+            context(), static_cast<cl_uint>(n), strings.data(), lengths.data(), &error);
 
         detail::errHandler(error, __CREATE_PROGRAM_WITH_SOURCE_ERR);
         if (err != NULL) {
@@ -6402,23 +6399,23 @@ public:
     {
         cl_int error;
 
-        const size_type n = (size_type)sources.size();
+        const size_type n = static_cast<size_type>(sources.size());
 
         vector<size_type> lengths(n);
         vector<const char*> strings(n);
 
         for (size_type i = 0; i < n; ++i) {
 #if !defined(CL_HPP_ENABLE_PROGRAM_CONSTRUCTION_FROM_ARRAY_COMPATIBILITY)
-            strings[i] = sources[(int)i].data();
-            lengths[i] = sources[(int)i].length();
+            strings[i] = sources[static_cast<int>(i)].data();
+            lengths[i] = sources[static_cast<int>(i)].length();
 #else // #if !defined(CL_HPP_ENABLE_PROGRAM_CONSTRUCTION_FROM_ARRAY_COMPATIBILITY)
-            strings[i] = sources[(int)i].first;
-            lengths[i] = sources[(int)i].second;
+            strings[i] = sources[static_cast<int>(i)].first;
+            lengths[i] = sources[static_cast<int>(i)].second;
 #endif // #if !defined(CL_HPP_ENABLE_PROGRAM_CONSTRUCTION_FROM_ARRAY_COMPATIBILITY)
         }
 
         object_ = ::clCreateProgramWithSource(
-            context(), (cl_uint)n, strings.data(), lengths.data(), &error);
+            context(), static_cast<cl_uint>(n), strings.data(), lengths.data(), &error);
 
         detail::errHandler(error, __CREATE_PROGRAM_WITH_SOURCE_ERR);
         if (err != NULL) {
@@ -6580,12 +6577,12 @@ public:
 #if !defined(CL_HPP_ENABLE_PROGRAM_CONSTRUCTION_FROM_ARRAY_COMPATIBILITY)
         for (size_type i = 0; i < numDevices; ++i) {
             images[i] = binaries[i].data();
-            lengths[i] = binaries[(int)i].size();
+            lengths[i] = binaries[static_cast<int>(i)].size();
         }
 #else // #if !defined(CL_HPP_ENABLE_PROGRAM_CONSTRUCTION_FROM_ARRAY_COMPATIBILITY)
         for (size_type i = 0; i < numDevices; ++i) {
             images[i] = (const unsigned char*)binaries[i].first;
-            lengths[i] = binaries[(int)i].second;
+            lengths[i] = binaries[static_cast<int>(i)].second;
         }
 #endif // #if !defined(CL_HPP_ENABLE_PROGRAM_CONSTRUCTION_FROM_ARRAY_COMPATIBILITY)
 
@@ -6599,7 +6596,8 @@ public:
         }
 
         object_ = ::clCreateProgramWithBinary(
-            context(), (cl_uint) devices.size(),
+            context(),
+			static_cast<cl_uint>(devices.size()),
             deviceIDs.data(),
             lengths.data(), images.data(), (binaryStatus != NULL && numDevices > 0)
                ? &binaryStatus->front()
@@ -6634,7 +6632,7 @@ public:
 
         object_ = ::clCreateProgramWithBuiltInKernels(
             context(),
-            (cl_uint) devices.size(),
+            static_cast<cl_uint>(devices.size()),
             deviceIDs.data(),
             kernelNames.c_str(),
             &error);
@@ -6707,8 +6705,7 @@ public:
 
         cl_int buildError = ::clBuildProgram(
             object_,
-            (cl_uint)
-            devices.size(),
+            static_cast<cl_uint>(devices.size()),
             deviceIDs.data(),
             options,
             notifyFptr,
@@ -6733,7 +6730,7 @@ public:
             notifyFptr,
             data);
 
-        BuildLogType buildLog(0);
+        BuildLogType buildLog(1);
         buildLog.push_back(std::make_pair(device, getBuildInfo<CL_PROGRAM_BUILD_LOG>(device)));
         return detail::buildErrHandler(buildError, __BUILD_PROGRAM_ERR, buildLog);
     }
@@ -7015,7 +7012,7 @@ inline Program linkProgram(
         0,
         NULL,
         options,
-        (cl_uint)inputPrograms.size(),
+        static_cast<cl_uint>(inputPrograms.size()),
         programs.data(),
         notifyFptr,
         data,
@@ -7109,11 +7106,6 @@ enum class QueueProperties : cl_command_queue_properties
 inline QueueProperties operator|(QueueProperties lhs, QueueProperties rhs)
 {
     return static_cast<QueueProperties>(static_cast<cl_command_queue_properties>(lhs) | static_cast<cl_command_queue_properties>(rhs));
-}
-
-inline QueueProperties operator&(QueueProperties lhs, QueueProperties rhs)
-{
-    return static_cast<QueueProperties>(static_cast<cl_command_queue_properties>(lhs) & static_cast<cl_command_queue_properties>(rhs));
 }
 
 /*! \class CommandQueue
@@ -7651,8 +7643,8 @@ public:
             ::clEnqueueReadBuffer(
                 object_, buffer(), blocking, offset, size,
                 ptr,
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
             __ENQUEUE_READ_BUFFER_ERR);
 
@@ -7676,8 +7668,8 @@ public:
             ::clEnqueueWriteBuffer(
                 object_, buffer(), blocking, offset, size,
                 ptr,
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
                 __ENQUEUE_WRITE_BUFFER_ERR);
 
@@ -7700,8 +7692,8 @@ public:
         cl_int err = detail::errHandler(
             ::clEnqueueCopyBuffer(
                 object_, src(), dst(), src_offset, dst_offset, size,
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
             __ENQEUE_COPY_BUFFER_ERR);
 
@@ -7739,8 +7731,8 @@ public:
                 host_row_pitch,
                 host_slice_pitch,
                 ptr,
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
                 __ENQUEUE_READ_BUFFER_RECT_ERR);
 
@@ -7778,8 +7770,8 @@ public:
                 host_row_pitch,
                 host_slice_pitch,
                 ptr,
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
                 __ENQUEUE_WRITE_BUFFER_RECT_ERR);
 
@@ -7815,8 +7807,8 @@ public:
                 src_slice_pitch,
                 dst_row_pitch,
                 dst_slice_pitch,
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
             __ENQEUE_COPY_BUFFER_RECT_ERR);
 
@@ -7856,8 +7848,8 @@ public:
                 sizeof(PatternType),
                 offset,
                 size,
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
                 __ENQUEUE_FILL_BUFFER_ERR);
 
@@ -7890,8 +7882,8 @@ public:
                 row_pitch,
                 slice_pitch,
                 ptr,
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
             __ENQUEUE_READ_IMAGE_ERR);
 
@@ -7923,8 +7915,8 @@ public:
                 row_pitch,
                 slice_pitch,
                 ptr,
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
             __ENQUEUE_WRITE_IMAGE_ERR);
 
@@ -7952,8 +7944,8 @@ public:
                 src_origin.data(),
                 dst_origin.data(),
                 region.data(),
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
             __ENQUEUE_COPY_IMAGE_ERR);
 
@@ -7987,8 +7979,8 @@ public:
                 static_cast<void*>(&fillColor),
                 origin.data(),
                 region.data(),
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
                 __ENQUEUE_FILL_IMAGE_ERR);
 
@@ -8021,8 +8013,8 @@ public:
                 static_cast<void*>(&fillColor),
                 origin.data(),
                 region.data(),
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
                 __ENQUEUE_FILL_IMAGE_ERR);
 
@@ -8055,8 +8047,8 @@ public:
                 static_cast<void*>(&fillColor),
                 origin.data(),
                 region.data(),
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
                 __ENQUEUE_FILL_IMAGE_ERR);
 
@@ -8085,8 +8077,8 @@ public:
                 src_origin.data(),
                 region.data(),
                 dst_offset,
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
             __ENQUEUE_COPY_IMAGE_TO_BUFFER_ERR);
 
@@ -8114,8 +8106,8 @@ public:
                 src_offset,
                 dst_origin.data(),
                 region.data(),
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
             __ENQUEUE_COPY_BUFFER_TO_IMAGE_ERR);
 
@@ -8139,8 +8131,8 @@ public:
         cl_int error;
         void * result = ::clEnqueueMapBuffer(
             object_, buffer(), blocking, flags, offset, size,
-            (events != NULL) ? (cl_uint) events->size() : 0,
-            (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+            (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+            (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
             (event != NULL) ? &tmp : NULL,
             &error);
 
@@ -8173,8 +8165,8 @@ public:
             origin.data(),
             region.data(),
             row_pitch, slice_pitch,
-            (events != NULL) ? (cl_uint) events->size() : 0,
-            (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+            (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+            (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
             (event != NULL) ? &tmp : NULL,
             &error);
 
@@ -8204,8 +8196,8 @@ public:
         cl_event tmp;
         cl_int err = detail::errHandler(::clEnqueueSVMMap(
             object_, blocking, flags, static_cast<void*>(ptr), size,
-            (events != NULL) ? (cl_uint)events->size() : 0,
-            (events != NULL && events->size() > 0) ? (cl_event*)&events->front() : NULL,
+            (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+            (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
             (event != NULL) ? &tmp : NULL),
             __ENQUEUE_MAP_BUFFER_ERR);
 
@@ -8232,8 +8224,8 @@ public:
         cl_event tmp;
         cl_int err = detail::errHandler(::clEnqueueSVMMap(
             object_, blocking, flags, static_cast<void*>(ptr.get()), size,
-            (events != NULL) ? (cl_uint)events->size() : 0,
-            (events != NULL && events->size() > 0) ? (cl_event*)&events->front() : NULL,
+            (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+            (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
             (event != NULL) ? &tmp : NULL),
             __ENQUEUE_MAP_BUFFER_ERR);
 
@@ -8258,8 +8250,8 @@ public:
         cl_event tmp;
         cl_int err = detail::errHandler(::clEnqueueSVMMap(
             object_, blocking, flags, static_cast<void*>(container.data()), container.size()*sizeof(T),
-            (events != NULL) ? (cl_uint)events->size() : 0,
-            (events != NULL && events->size() > 0) ? (cl_event*)&events->front() : NULL,
+            (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+            (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
             (event != NULL) ? &tmp : NULL),
             __ENQUEUE_MAP_BUFFER_ERR);
 
@@ -8280,8 +8272,8 @@ public:
         cl_int err = detail::errHandler(
             ::clEnqueueUnmapMemObject(
                 object_, memory(), mapped_ptr,
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
             __ENQUEUE_UNMAP_MEM_OBJECT_ERR);
 
@@ -8307,8 +8299,8 @@ public:
         cl_int err = detail::errHandler(
             ::clEnqueueSVMUnmap(
             object_, static_cast<void*>(ptr),
-            (events != NULL) ? (cl_uint)events->size() : 0,
-            (events != NULL && events->size() > 0) ? (cl_event*)&events->front() : NULL,
+            (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+            (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
             (event != NULL) ? &tmp : NULL),
             __ENQUEUE_UNMAP_MEM_OBJECT_ERR);
 
@@ -8332,8 +8324,8 @@ public:
         cl_int err = detail::errHandler(
             ::clEnqueueSVMUnmap(
             object_, static_cast<void*>(ptr.get()),
-            (events != NULL) ? (cl_uint)events->size() : 0,
-            (events != NULL && events->size() > 0) ? (cl_event*)&events->front() : NULL,
+            (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+            (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
             (event != NULL) ? &tmp : NULL),
             __ENQUEUE_UNMAP_MEM_OBJECT_ERR);
 
@@ -8357,8 +8349,8 @@ public:
         cl_int err = detail::errHandler(
             ::clEnqueueSVMUnmap(
             object_, static_cast<void*>(container.data()),
-            (events != NULL) ? (cl_uint)events->size() : 0,
-            (events != NULL && events->size() > 0) ? (cl_event*)&events->front() : NULL,
+            (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+            (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
             (event != NULL) ? &tmp : NULL),
             __ENQUEUE_UNMAP_MEM_OBJECT_ERR);
 
@@ -8389,8 +8381,8 @@ public:
         cl_int err = detail::errHandler(
             ::clEnqueueMarkerWithWaitList(
                 object_,
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
             __ENQUEUE_MARKER_WAIT_LIST_ERR);
 
@@ -8419,8 +8411,8 @@ public:
         cl_int err = detail::errHandler(
             ::clEnqueueBarrierWithWaitList(
                 object_,
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
             __ENQUEUE_BARRIER_WAIT_LIST_ERR);
 
@@ -8445,18 +8437,18 @@ public:
 
         vector<cl_mem> localMemObjects(memObjects.size());
 
-        for( int i = 0; i < (int)memObjects.size(); ++i ) {
+        for( int i = 0; i < static_cast<int>(memObjects.size()); ++i ) {
             localMemObjects[i] = memObjects[i]();
         }
 
         cl_int err = detail::errHandler(
             ::clEnqueueMigrateMemObjects(
                 object_,
-                (cl_uint)memObjects.size(),
+                static_cast<cl_uint>(memObjects.size()),
                 localMemObjects.data(),
                 flags,
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
             __ENQUEUE_UNMAP_MEM_OBJECT_ERR);
 
@@ -8600,12 +8592,12 @@ public:
         cl_event tmp;
         cl_int err = detail::errHandler(
             ::clEnqueueNDRangeKernel(
-                object_, kernel(), (cl_uint) global.dimensions(),
-                offset.dimensions() != 0 ? (const size_type*) offset : NULL,
-                (const size_type*) global,
-                local.dimensions() != 0 ? (const size_type*) local : NULL,
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                object_, kernel(), static_cast<cl_uint>(global.dimensions()),
+                offset.dimensions() != 0 ? static_cast<const size_type*>(offset) : NULL,
+                static_cast<const size_type*>(global),
+                local.dimensions() != 0 ? static_cast<const size_type*>(local) : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
             __ENQUEUE_NDRANGE_KERNEL_ERR);
 
@@ -8625,8 +8617,8 @@ public:
         cl_int err = detail::errHandler(
             ::clEnqueueTask(
                 object_, kernel(),
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
             __ENQUEUE_TASK_ERR);
 
@@ -8658,11 +8650,11 @@ public:
         cl_int err = detail::errHandler(
             ::clEnqueueNativeKernel(
                 object_, userFptr, args.first, args.second,
-                (mem_objects != NULL) ? (cl_uint) mem_objects->size() : 0,
+                (mem_objects != NULL) ? static_cast<cl_uint>(mem_objects->size()) : 0,
                 mems.data(),
-                (mem_locs != NULL && mem_locs->size() > 0) ? (const void **) &mem_locs->front() : NULL,
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (mem_locs != NULL && mem_locs->size() > 0) ? const_cast<void const**>(&mem_locs->front()) : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
             __ENQUEUE_NATIVE_KERNEL);
 
@@ -8698,7 +8690,7 @@ public:
         return detail::errHandler(
             ::clEnqueueWaitForEvents(
                 object_,
-                (cl_uint) events.size(),
+                static_cast<cl_uint>(events.size()),
                 events.size() > 0 ? (const cl_event*) &events.front() : NULL),
             __ENQUEUE_WAIT_FOR_EVENTS_ERR);
     }
@@ -8713,10 +8705,10 @@ public:
         cl_int err = detail::errHandler(
              ::clEnqueueAcquireGLObjects(
                  object_,
-                 (mem_objects != NULL) ? (cl_uint) mem_objects->size() : 0,
-                 (mem_objects != NULL && mem_objects->size() > 0) ? (const cl_mem *) &mem_objects->front(): NULL,
-                 (events != NULL) ? (cl_uint) events->size() : 0,
-                 (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                 (mem_objects != NULL) ? static_cast<cl_uint>(mem_objects->size()) : 0,
+                 (mem_objects != NULL && mem_objects->size() > 0) ? reinterpret_cast<cl_mem const*>(&mem_objects->front()) : NULL,
+                 (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                 (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                  (event != NULL) ? &tmp : NULL),
              __ENQUEUE_ACQUIRE_GL_ERR);
 
@@ -8735,10 +8727,10 @@ public:
         cl_int err = detail::errHandler(
              ::clEnqueueReleaseGLObjects(
                  object_,
-                 (mem_objects != NULL) ? (cl_uint) mem_objects->size() : 0,
-                 (mem_objects != NULL && mem_objects->size() > 0) ? (const cl_mem *) &mem_objects->front(): NULL,
-                 (events != NULL) ? (cl_uint) events->size() : 0,
-                 (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                 (mem_objects != NULL) ? static_cast<cl_uint>(mem_objects->size()) : 0,
+                 (mem_objects != NULL && mem_objects->size() > 0) ? reinterpret_cast<cl_mem const*>(&mem_objects->front()) : NULL,
+                 (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                 (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                  (event != NULL) ? &tmp : NULL),
              __ENQUEUE_RELEASE_GL_ERR);
 
@@ -8780,8 +8772,8 @@ typedef CL_API_ENTRY cl_int (CL_API_CALL *PFN_clEnqueueReleaseD3D10ObjectsKHR)(
                  object_,
                  (mem_objects != NULL) ? (cl_uint) mem_objects->size() : 0,
                  (mem_objects != NULL && mem_objects->size() > 0) ? (const cl_mem *) &mem_objects->front(): NULL,
-                 (events != NULL) ? (cl_uint) events->size() : 0,
-                 (events != NULL) ? (cl_event*) &events->front() : NULL,
+                 (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                 (events != NULL) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                  (event != NULL) ? &tmp : NULL),
              __ENQUEUE_ACQUIRE_GL_ERR);
 
@@ -8813,8 +8805,8 @@ typedef CL_API_ENTRY cl_int (CL_API_CALL *PFN_clEnqueueReleaseD3D10ObjectsKHR)(
                 object_,
                 (mem_objects != NULL) ? (cl_uint) mem_objects->size() : 0,
                 (mem_objects != NULL && mem_objects->size() > 0) ? (const cl_mem *) &mem_objects->front(): NULL,
-                (events != NULL) ? (cl_uint) events->size() : 0,
-                (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
+                (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+                (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
                 (event != NULL) ? &tmp : NULL),
             __ENQUEUE_RELEASE_GL_ERR);
 
@@ -9176,7 +9168,7 @@ Buffer::Buffer(
     size_type size = sizeof(DataType)*(endIterator - startIterator);
 
     if( useHostPtr ) {
-        object_ = ::clCreateBuffer(context(), flags, size, const_cast<DataType*>(&*startIterator), &error);
+        object_ = ::clCreateBuffer(context(), flags, size, static_cast<DataType*>(&*startIterator), &error);
     } else {
         object_ = ::clCreateBuffer(context(), flags, size, 0, &error);
     }
@@ -9229,7 +9221,7 @@ Buffer::Buffer(
     Context context = queue.getInfo<CL_QUEUE_CONTEXT>();
 
     if (useHostPtr) {
-        object_ = ::clCreateBuffer(context(), flags, size, const_cast<DataType*>(&*startIterator), &error);
+        object_ = ::clCreateBuffer(context(), flags, size, static_cast<DataType*>(&*startIterator), &error);
     }
     else {
         object_ = ::clCreateBuffer(context(), flags, size, 0, &error);
@@ -9306,9 +9298,9 @@ inline void* enqueueMapBuffer(
 
     void * result = ::clEnqueueMapBuffer(
             queue(), buffer(), blocking, flags, offset, size,
-            (events != NULL) ? (cl_uint) events->size() : 0,
-            (events != NULL && events->size() > 0) ? (cl_event*) &events->front() : NULL,
-            (cl_event*) event,
+            (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+            (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
+            reinterpret_cast<cl_event*>(event),
             &error);
 
     detail::errHandler(error, __ENQUEUE_MAP_BUFFER_ERR);
@@ -9410,8 +9402,8 @@ inline cl_int enqueueUnmapMemObject(
     cl_int err = detail::errHandler(
         ::clEnqueueUnmapMemObject(
         queue(), memory(), mapped_ptr,
-        (events != NULL) ? (cl_uint)events->size() : 0,
-        (events != NULL && events->size() > 0) ? (cl_event*)&events->front() : NULL,
+        (events != NULL) ? static_cast<cl_uint>(events->size()) : 0,
+        (events != NULL && events->size() > 0) ? reinterpret_cast<cl_event const*>(&events->front()) : NULL,
         (event != NULL) ? &tmp : NULL),
         __ENQUEUE_UNMAP_MEM_OBJECT_ERR);
 
